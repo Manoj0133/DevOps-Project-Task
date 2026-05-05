@@ -18,46 +18,34 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
-    env:
-      AWS_REGION: us-east-1
-      INSTANCE_NAME: statuspulse
-      IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
-
     steps:
-      - name: Set lowercase image name
+      - name: Set image variables
         run: |
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME=ghcr.io/$OWNER/statuspulse" >> $GITHUB_ENV
-          
-      - name: Configure AWS credentials
-        run: |
-          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws configure set region ${{ env.AWS_REGION }}
+          echo "IMAGE_TAG=${{ github.event.workflow_run.head_sha || github.sha }}" >> $GITHUB_ENV
 
-      - name: Find EC2 instance
-        run: |
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].InstanceId" \
-            --output text)
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
 
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "EC2 instance not found"
-            exit 1
-          fi
+            echo "Logging into GHCR..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+            echo "Pulling latest image..."
+            docker pull $IMAGE_NAME:$IMAGE_TAG
 
-      - name: Deploy via SSM
-        run: |
-          aws ssm send-command \
-            --document-name "AWS-RunShellScript" \
-            --instance-ids "$INSTANCE_ID" \
-            --comment "Deploy statuspulse" \
-            --parameters commands="[
-              \"docker pull $IMAGE_NAME:$IMAGE_TAG\",
-              \"docker stop statuspulse || true\",
-              \"docker rm statuspulse || true\",
-              \"docker run -d --name statuspulse -p 80:3000 $IMAGE_NAME:$IMAGE_TAG\"
-            ]"
+            echo "Stopping old container..."
+            docker stop statuspulse || true
+            docker rm statuspulse || true
+
+            echo "Starting new container..."
+            docker run -d \
+              --name statuspulse \
+              -p 80:3000 \
+              $IMAGE_NAME:$IMAGE_TAG
