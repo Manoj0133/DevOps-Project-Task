@@ -16,40 +16,34 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/statuspulse
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show repository files (debug)
+      - name: Show files (debug)
+        run: ls -la
+
+      - name: Set lowercase image name
         run: |
-          echo "Listing project files:"
-          ls -la
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=ghcr.io/$OWNER/statuspulse" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Verify Dockerfile exists
         run: |
           if [ ! -f Dockerfile ]; then
-            echo " Dockerfile not found in root directory"
+            echo "Dockerfile not found"
             exit 1
           fi
 
-      - name: Set image tag
-        run: echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
-
-      - name: Log in to GHCR
+      - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Build Docker image
         run: |
           set -e
           echo "Building Docker image..."
-          docker build --no-cache -t $IMAGE_NAME:$IMAGE_TAG .
-
-      - name: Verify Docker image
-        run: |
-          docker images | grep statuspulse || (echo "Image build failed" && exit 1)
+          docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
       - name: Push Docker image
         run: |
