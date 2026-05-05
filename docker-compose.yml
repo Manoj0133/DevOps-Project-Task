@@ -1,0 +1,188 @@
+name: statuspulse
+
+x-app-env: &app-env
+  DB_HOST: ${DB_HOST:-db}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_NAME: ${DB_NAME:-statuspulse}
+  DB_USER: ${DB_USER:-statuspulse}
+  DB_PASSWORD: ${DB_PASSWORD:-statuspulse}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-60}
+  RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${APP_IMAGE:-statuspulse-app:local}
+    container_name: statuspulse-app
+    env_file:
+      - path: ./.env
+        required: false
+    environment: *app-env
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      - statuspulse-net
+
+  db:
+    image: postgres:16-alpine
+    container_name: statuspulse-db
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      POSTGRES_DB: ${DB_NAME:-statuspulse}
+      POSTGRES_USER: ${DB_USER:-statuspulse}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-statuspulse}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      - statuspulse-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: statuspulse-redis
+    env_file:
+      - path: ./.env
+        required: false
+    command:
+      - sh
+      - -c
+      - if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"; else exec redis-server --appendonly yes; fi
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    mem_limit: 256m
+    networks:
+      - statuspulse-net
+
+  app_blue:
+    image: ${APP_BLUE_IMAGE:-statuspulse-app:blue}
+    container_name: statuspulse-app-blue
+    env_file:
+      - path: ./.env
+        required: false
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    mem_limit: 512m
+    profiles:
+      - prod
+    networks:
+      - statuspulse-net
+
+  app_green:
+    image: ${APP_GREEN_IMAGE:-statuspulse-app:green}
+    container_name: statuspulse-app-green
+    env_file:
+      - path: ./.env
+        required: false
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import json,sys,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)); sys.exit(0 if data.get('status') == 'healthy' else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    mem_limit: 512m
+    profiles:
+      - prod
+    networks:
+      - statuspulse-net
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: statuspulse-caddy
+    env_file:
+      - path: ./.env
+        required: false
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    mem_limit: 256m
+    profiles:
+      - prod
+    networks:
+      - statuspulse-net
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: statuspulse-uptime-kuma
+    ports:
+      - "${UPTIME_KUMA_PORT:-3001}:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    restart: unless-stopped
+    mem_limit: 512m
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  uptime_kuma_data:
+
+networks:
+  statuspulse-net:
+    driver: bridge

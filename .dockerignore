@@ -1,0 +1,16 @@
+.git
+.github
+task-*
+terraform/.terraform
+terraform/*.tfstate
+terraform/*.tfstate.*
+.env
+.env.*
+*.log
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.venv
