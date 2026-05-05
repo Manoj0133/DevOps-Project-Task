@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -21,20 +20,22 @@ jobs:
 
     env:
       AWS_REGION: us-east-1
-      AWS_ROLE_ARN: arn:aws:iam::381492115031:role/statuspulse-github-actions
       INSTANCE_NAME: statuspulse
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/statuspulse
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
 
     steps:
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Set lowercase image name
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=ghcr.io/$OWNER/statuspulse" >> $GITHUB_ENV
+          
+      - name: Configure AWS credentials
+        run: |
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set region ${{ env.AWS_REGION }}
 
       - name: Find EC2 instance
-        id: ec2
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=${INSTANCE_NAME}" "Name=instance-state-name,Values=running" \
@@ -53,6 +54,7 @@ jobs:
           aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
+            --comment "Deploy statuspulse" \
             --parameters commands="[
               \"docker pull $IMAGE_NAME:$IMAGE_TAG\",
               \"docker stop statuspulse || true\",
