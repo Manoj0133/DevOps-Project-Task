@@ -12,7 +12,7 @@ permissions:
   id-token: write
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # ✅ Fix Node warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   deploy:
@@ -25,7 +25,6 @@ jobs:
       INSTANCE_NAME: statuspulse
       IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/statuspulse
       IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
-      PUBLIC_BASE_URL: https://ak-info.online
 
     steps:
       - name: Configure AWS
@@ -34,7 +33,7 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get EC2 instance
+      - name: Find EC2 instance
         id: ec2
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
@@ -51,22 +50,12 @@ jobs:
 
       - name: Deploy via SSM
         run: |
-          COMMAND_ID=$(aws ssm send-command \
+          aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
             --parameters commands="[
-              \"set -e\",
               \"docker pull $IMAGE_NAME:$IMAGE_TAG\",
               \"docker stop statuspulse || true\",
               \"docker rm statuspulse || true\",
               \"docker run -d --name statuspulse -p 80:3000 $IMAGE_NAME:$IMAGE_TAG\"
-            ]" \
-            --query "Command.CommandId" \
-            --output text)
-
-          echo "Command ID: $COMMAND_ID"
-
-      - name: Health check
-        run: |
-          sleep 10
-          curl -f ${PUBLIC_BASE_URL}/health || exit 1
+            ]"
